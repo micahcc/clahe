@@ -2,7 +2,6 @@ use std::usize;
 
 use image::*;
 use ndarray::prelude::*;
-use ndarray_stats::QuantileExt;
 use thiserror::Error;
 #[macro_use]
 extern crate log;
@@ -97,7 +96,7 @@ fn _clahe_ndarray<A, B, S, T>(
 ) -> ArrayBase<T, Ix2>
 where
     S: Clone + ndarray::Data<Elem = A>,
-    A: Copy + PartialOrd,
+    A: Copy + PartialOrd + num_traits::Zero,
     T: Clone + ndarray::DataOwned<Elem = B> + ndarray::RawDataMut<Elem = B>,
     B: num_traits::Bounded + RoundFrom + Clone + Copy + num_traits::Zero,
     f32: From<A> + From<B>,
@@ -263,7 +262,10 @@ where
     f32: From<B>,
     usize: From<A>,
 {
-    let max_pix_value = input.max().unwrap();
+    let max_pix_value = input
+        .into_iter()
+        .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap();
 
     // max_pix_value + 1 is used as the size of the histogram to reduce the computation for clip_hist and calc_lut.
     // This is different from OpenCV's size (T::Max + 1).
@@ -331,13 +333,16 @@ pub fn calculate_luts<A, B, S>(
     clip_limit: u32,
 ) -> ArrayBase<ndarray::OwnedRepr<B>, Dim<[usize; 3]>>
 where
-    A: Copy + PartialOrd,
+    A: Copy + PartialOrd + num_traits::Zero,
     B: num_traits::Bounded + RoundFrom + Clone + Copy + num_traits::Zero,
     S: Clone + ndarray::Data<Elem = A>,
     f32: From<B>,
     usize: From<A>,
 {
-    let max_pix_value = input.max().unwrap();
+    let max_pix_value = input
+        .into_iter()
+        .max_by(|x, y| x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal))
+        .unwrap();
 
     // max_pix_value + 1 is used as the size of the histogram to reduce the computation for clip_hist and calc_lut.
     // This is different from OpenCV's size (T::Max + 1).
@@ -599,16 +604,24 @@ where
     }
 }
 
+pub fn into_raw_vec<T, D>(input: Array<T, D>) -> Vec<T>
+where
+    D: ndarray::Dimension,
+{
+    let (mut raw_vec, maybe_offset) = input.into_raw_vec_and_offset();
+    if let Some(offset) = maybe_offset {
+        raw_vec.drain(0..offset);
+    }
+    return raw_vec;
+}
+
 pub fn array2image<T>(input: Array2<T>) -> ImageBuffer<Luma<T>, Vec<T>>
 where
     T: image::Primitive + Into<usize> + Into<u32> + Ord + 'static,
 {
-    ImageBuffer::from_vec(
-        input.ncols() as u32,
-        input.nrows() as u32,
-        input.into_raw_vec(),
-    )
-    .unwrap()
+    let ncols = input.ncols() as u32;
+    let nrows = input.nrows() as u32;
+    ImageBuffer::from_vec(ncols, nrows, into_raw_vec(input)).unwrap()
 }
 
 /// Contrast Limited Adaptive Histogram Equalization (CLAHE)
@@ -640,10 +653,12 @@ where
         clip_limit,
         tile_sample,
     )?;
-    Ok(
-        ImageBuffer::<Luma<S>, Vec<S>>::from_vec(input_width, input_height, arr.into_raw_vec())
-            .unwrap(),
-    )
+    let (mut raw_vec, maybe_offset) = arr.into_raw_vec_and_offset();
+    if let Some(offset) = maybe_offset {
+        raw_vec.drain(0..offset);
+    }
+
+    Ok(ImageBuffer::<Luma<S>, Vec<S>>::from_vec(input_width, input_height, raw_vec).unwrap())
 }
 
 pub fn pad_array<A, S>(

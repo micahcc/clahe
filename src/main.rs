@@ -8,6 +8,8 @@ use clap::Parser;
 use image::DynamicImage;
 use ndarray::prelude::*;
 
+use clahe::into_raw_vec;
+
 #[derive(Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct Args {
@@ -85,7 +87,7 @@ fn main() -> Result<()> {
                 rgb.to_hsl()
             });
             let arr_lum = arr_hsl.map(|hsl| (hsl.l * 255.0).round() as u8);
-            let arr_lum = Array2::from_shape_vec(image_shape, arr_lum.into_raw_vec())
+            let arr_lum = Array2::from_shape_vec(image_shape, into_raw_vec(arr_lum))
                 .context("Rgb array to luminosity array")?;
             let new_lum: Array2<u8> = clahe::clahe_ndarray(
                 arr_lum.view(),
@@ -94,14 +96,14 @@ fn main() -> Result<()> {
                 args.clip_limit,
                 args.tile_sample,
             )?;
-            let new_lum = Array1::from_shape_vec(new_lum.len(), new_lum.into_raw_vec())?;
+            let new_lum = Array1::from_shape_vec(new_lum.len(), into_raw_vec(new_lum))?;
             arr_hsl.zip_mut_with(&new_lum, |hsl, lum| {
                 hsl.l = *lum as f32 / 255.0;
             });
 
             // Use `Vec` as intermediate container because I could not figure out
             // a way to directly convert Array to Image
-            let mut vec_rgb = arr_rgb.into_raw_vec(); //vec![0; image_shape.0 * image_shape.1 * 3];
+            let mut vec_rgb = into_raw_vec(arr_rgb); //vec![0; image_shape.0 * image_shape.1 * 3];
             vec_rgb.clear();
             arr_hsl.for_each(|hsl| {
                 let rgb = hsl.to_rgb();
